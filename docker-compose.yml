@@ -19,7 +19,7 @@ services:
     depends_on:
       - db
     environment:
-      DATABASE_URL: postgresql://admin:adminpassword@db:5432/climdb
+      DATABASE_URL: postgresql://admin:adminpassword@db:5432/climadb
 
 volumes:
   postgres_data:
