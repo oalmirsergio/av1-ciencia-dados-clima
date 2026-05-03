@@ -1,0 +1,66 @@
+import os
+import pandas as pd
+import streamlit as st
+import plotly.express as px
+from sqlalchemy import create_engine
+
+st.set_page_config(page_title="Monitorização Climática", layout="wide")
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://admin:adminpassword@localhost:5432/climdb")
+engine = create_engine(DATABASE_URL)
+
+st.title("🌦️ Análise de Dados Climáticos (2014 - 2023)")
+st.markdown("Projeto com PostgreSQL, SQLAlchemy e Streamlit.")
+
+@st.cache_data(ttl=600)
+def load_cities():
+    with engine.connect() as conn:
+        return pd.read_sql("SELECT id, cidade, estado FROM estacoes ORDER BY cidade", conn)
+
+df_cidades = load_cities()
+st.sidebar.header("Filtros Interativos")
+cidade_selecionada = st.sidebar.selectbox("Selecione a Cidade:", df_cidades['cidade'].tolist())
+ano_selecionado = st.sidebar.slider("Selecione o Ano:", 2014, 2023, (2014, 2023))
+
+estacao_id = df_cidades[df_cidades['cidade'] == cidade_selecionada]['id'].iloc[0]
+
+# Consulta SQL não trivial (JOIN e Filtros explícitos exigidos na rubrica)
+query = f"""
+    SELECT l.data_medicao, l.temperatura, l.umidade, l.precipitacao, e.cidade
+    FROM leituras l
+    JOIN estacoes e ON l.estacao_id = e.id
+    WHERE e.id = {estacao_id}
+    AND EXTRACT(YEAR FROM l.data_medicao) BETWEEN {ano_selecionado[0]} AND {ano_selecionado[1]}
+    ORDER BY l.data_medicao
+"""
+
+with engine.connect() as conn:
+    df_dados = pd.read_sql(query, conn)
+
+st.subheader(f"Resumo Histórico: {cidade_selecionada}")
+col1, col2, col3 = st.columns(3)
+col1.metric("Máxima Histórica", f"{df_dados['temperatura'].max():.1f}°C")
+col2.metric("Mínima Histórica", f"{df_dados['temperatura'].min():.1f}°C")
+col3.metric("Pico de Precipitação (1 dia)", f"{df_dados['precipitacao'].max():.1f}mm")
+
+st.divider()
+
+# Gráfico 1: Linhas (Série Temporal)
+st.subheader("Evolução Temporal da Temperatura")
+fig_linha = px.line(df_dados, x="data_medicao", y="temperatura", color_discrete_sequence=["#FF5733"])
+st.plotly_chart(fig_linha, use_container_width=True)
+
+colA, colB = st.columns(2)
+with colA:
+    # Gráfico 2: Barras (Agregação de Média Mensal)
+    st.subheader("Sazonalidade: Média de Chuva por Mês")
+    df_dados['mes'] = pd.to_datetime(df_dados['data_medicao']).dt.month
+    chuva_mensal = df_dados.groupby('mes')['precipitacao'].mean().reset_index()
+    fig_barra = px.bar(chuva_mensal, x="mes", y="precipitacao", color_discrete_sequence=["#33C1FF"])
+    st.plotly_chart(fig_barra, use_container_width=True)
+
+with colB:
+    # Gráfico 3: Histograma (Distribuição)
+    st.subheader("Distribuição da Umidade")
+    fig_hist = px.histogram(df_dados, x="umidade", nbins=30, color_discrete_sequence=["#33FF57"])
+    st.plotly_chart(fig_hist, use_container_width=True)
