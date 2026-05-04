@@ -9,7 +9,7 @@ Este projeto realiza a ingestão, armazenamento e visualização de dados climá
 O projeto foi totalmente conteinerizado utilizando **Docker**. Para subir o banco de dados, gerar os dados e abrir o dashboard, basta rodar o comando abaixo na raiz do projeto:
 
 ```bash
-docker compose up --build
+docker-compose up --build
 ```
 
 Após o processo de inicialização, o dashboard estará disponível em: **[http://localhost:8501](https://www.google.com/search?q=http://localhost:8501)**
