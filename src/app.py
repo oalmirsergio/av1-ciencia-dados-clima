@@ -1,135 +1,147 @@
 import os
-import pandas as pd
 import streamlit as st
+import pandas as pd
 import plotly.express as px
-from sqlalchemy import create_engine
+import requests
 
-st.set_page_config(page_title="Monitorização Climática", layout="wide")
+# Importação dinâmica do modelo isolado
+try:
+    from modelo import treinar_e_prever
+except ImportError:
+    from src.modelo import treinar_e_prever
 
-# DATABASE_URL
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://admin:adminpassword@localhost:5432/climdb")
-engine = create_engine(DATABASE_URL)
+st.set_page_config(page_title="Monitorização Climática Preditiva", layout="wide")
 
-st.title("🌦️ Análise de Dados Climáticos (2014 - 2023)")
-st.markdown("Projeto com PostgreSQL, SQLAlchemy e Streamlit.")
+API_URL = os.getenv("API_URL", "http://api:8000")
+
+st.title("🌦️ Sistema União de Monitoramento & Previsão Climática (AV2)")
+st.markdown("Plataforma desacoplada de dados climáticos brasileiros (2014 - 2023).")
 
 @st.cache_data(ttl=600)
 def load_cities():
-    with engine.connect() as conn:
-        return pd.read_sql("SELECT id, cidade, estado FROM estacoes ORDER BY cidade", conn)
+    try:
+        response = requests.get(f"{API_URL}/cidades")
+        if response.status_code == 200:
+            return pd.DataFrame(response.json())
+    except Exception as e:
+        st.error(f"Não foi possível conectar à API de dados: {e}")
+    return pd.DataFrame(columns=['id', 'cidade', 'estado'])
 
 df_cidades = load_cities()
 
-# --- SIDEBAR (Filtros que afetam ambas as abas) ---
-st.sidebar.header("Filtros Interativos")
-ano_selecionado = st.sidebar.slider("Selecione o Ano:", 2014, 2023, (2014, 2023))
-
-# Criação das Abas
-tab1, tab2 = st.tabs(["📊 Análise Individual", "⚔️ Comparativo entre Cidades"])
-
-# ==========================================
-# ABA 1: ANÁLISE INDIVIDUAL
-# ==========================================
-with tab1:
-    cidade_selecionada = st.selectbox("Selecione a Cidade:", df_cidades['cidade'].tolist())
-    estacao_id = df_cidades[df_cidades['cidade'] == cidade_selecionada]['id'].iloc[0]
-
-    # Consulta SQL original
-    query = f"""
-        SELECT l.data_medicao, l.temperatura, l.umidade, l.precipitacao, e.cidade
-        FROM leituras l
-        JOIN estacoes e ON l.estacao_id = e.id
-        WHERE e.id = {estacao_id}
-        AND EXTRACT(YEAR FROM l.data_medicao) BETWEEN {ano_selecionado[0]} AND {ano_selecionado[1]}
-        ORDER BY l.data_medicao
-    """
-
-    with engine.connect() as conn:
-        df_dados = pd.read_sql(query, conn)
-
-    st.subheader(f"Resumo Histórico: {cidade_selecionada}")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Máxima Histórica", f"{df_dados['temperatura'].max():.1f}°C")
-    col2.metric("Mínima Histórica", f"{df_dados['temperatura'].min():.1f}°C")
-    col3.metric("Pico de Precipitação (1 dia)", f"{df_dados['precipitacao'].max():.1f}mm")
-
-    st.divider()
-
-    # Gráfico 1: Linhas (Série Temporal)
-    st.subheader("Evolução Temporal da Temperatura")
-    fig_linha = px.line(df_dados, x="data_medicao", y="temperatura", color_discrete_sequence=["#FF5733"])
-    st.plotly_chart(fig_linha, use_container_width=True)
-
-    colA, colB = st.columns(2)
-    with colA:
-        # Gráfico 2: Barras (Agregação de Média Mensal)
-        st.subheader("Sazonalidade: Média de Chuva por Mês")
-        df_dados['mes'] = pd.to_datetime(df_dados['data_medicao']).dt.month
-        chuva_mensal = df_dados.groupby('mes')['precipitacao'].mean().reset_index()
-        fig_barra = px.bar(chuva_mensal, x="mes", y="precipitacao", color_discrete_sequence=["#33C1FF"])
-        st.plotly_chart(fig_barra, use_container_width=True)
-
-    with colB:
-        # Gráfico 3: Histograma (Distribuição)
-        st.subheader("Distribuição da Umidade")
-        fig_hist = px.histogram(df_dados, x="umidade", nbins=30, color_discrete_sequence=["#33FF57"])
-        st.plotly_chart(fig_hist, use_container_width=True)
-
-# ==========================================
-# ABA 2: COMPARATIVO
-# ==========================================
-with tab2:
-    st.subheader("⚔️ Comparação Direta entre Cidades")
+if df_cidades.empty:
+    st.warning("⚠️ Banco de dados ou API indisponíveis no momento. Verifique a execução dos containers.")
+else:
+    # --- PAINEL LATERAL DE CONTROLES ---
+    st.sidebar.header("⚙️ Painel de Controle Geral")
+    ano_selecionado = st.sidebar.slider("Exibição Histórica (Abas 1 e 2):", 2014, 2023, (2014, 2023))
     
-    cidades_comparar = st.multiselect(
-        "Selecione as cidades para comparar:",
-        options=df_cidades['cidade'].tolist(),
-        default=df_cidades['cidade'].tolist()[:2] # Pega as duas primeiras como padrão
-    )
+    st.sidebar.markdown("---")
+    st.sidebar.header("🧠 Configurações de Machine Learning")
+    tipo_modelo = st.sidebar.selectbox("Modelo Preditivo:", ["Regressão Linear", "Random Forest"])
+    ano_corte = st.sidebar.slider("Ponto de Corte Temporal (t0):", 2017, 2022, 2021)
 
-    if cidades_comparar:
-        ids_comparar = df_cidades[df_cidades['cidade'].isin(cidades_comparar)]['id'].tolist()
-        ids_filtro = ",".join(map(str, ids_comparar))
+    tab1, tab2, tab3 = st.tabs(["📊 Análise Individual", "⚔️ Comparativo entre Cidades", "🔮 Inteligência Preditiva"])
 
-        # Query comparativa usando o operador IN
-        query_comp = f"""
-            SELECT l.data_medicao, l.temperatura, l.precipitacao, e.cidade
-            FROM leituras l
-            JOIN estacoes e ON l.estacao_id = e.id
-            WHERE e.id IN ({ids_filtro})
-            AND EXTRACT(YEAR FROM l.data_medicao) BETWEEN {ano_selecionado[0]} AND {ano_selecionado[1]}
-            ORDER BY l.data_medicao
-        """
+    # ==========================================
+    # ABA 1: ANÁLISE INDIVIDUAL (Modificada para API)
+    # ==========================================
+    with tab1:
+        cidade_selecionada = st.selectbox("Selecione a Cidade:", df_cidades['cidade'].tolist(), key="sb_ind")
+        estacao_id = df_cidades[df_cidades['cidade'] == cidade_selecionada]['id'].values[0]
+        
+        response = requests.get(f"{API_URL}/dados/{estacao_id}")
+        if response.status_code == 200:
+            df_ind = pd.DataFrame(response.json())
+            df_ind['data_medicao'] = pd.to_datetime(df_ind['data_medicao'])
+            df_ind['ano'] = df_ind['data_medicao'].dt.year
+            
+            df_filtrado = df_ind[(df_ind['ano'] >= ano_selecionado[0]) & (df_ind['ano'] <= ano_selecionado[1])]
+            
+            st.subheader(f"📈 Tendência de Temperatura — {cidade_selecionada}")
+            fig_temp = px.line(df_filtrado, x="data_medicao", y="temperatura", labels={"temperatura": "Temperatura (°C)", "data_medicao": "Data"})
+            st.plotly_chart(fig_temp, use_container_width=True)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("🌧️ Precipitação Mensal Média")
+                df_filtrado['mes'] = df_filtrado['data_medicao'].dt.month
+                df_chuva = df_filtrado.groupby('mes')['precipitacao'].mean().reset_index()
+                fig_chuva = px.bar(df_chuva, x="mes", y="precipitacao", labels={"precipitacao": "Chuva (mm)", "mes": "Mês"})
+                st.plotly_chart(fig_chuva, use_container_width=True)
+            with col2:
+                st.subheader("📊 Distribuição de Umidade")
+                fig_umidade = px.histogram(df_filtrado, x="umidade", nbins=30, labels={"umidade": "Umidade (%)"})
+                st.plotly_chart(fig_umidade, use_container_width=True)
 
-        with engine.connect() as conn:
-            df_comp = pd.read_sql(query_comp, conn)
+    # ==========================================
+    # ABA 2: COMPARATIVO ENTRE CIDADES (Modificada para API)
+    # ==========================================
+    with tab2:
+        cidades_selecionadas = st.multiselect("Selecione as Cidades:", df_cidades['cidade'].tolist(), default=df_cidades['cidade'].tolist()[:2])
+        
+        if len(cidades_selecionadas) > 0:
+            dfs_comp = []
+            for city in cidades_selecionadas:
+                c_id = df_cidades[df_cidades['cidade'] == city]['id'].values[0]
+                res_c = requests.get(f"{API_URL}/dados/{c_id}")
+                if res_c.status_code == 200:
+                    df_c = pd.DataFrame(res_c.json())
+                    df_c['cidade'] = city
+                    dfs_comp.append(df_c)
+            
+            if dfs_comp:
+                df_comp = pd.concat(dfs_comp)
+                df_comp['data_medicao'] = pd.to_datetime(df_comp['data_medicao'])
+                df_comp['ano'] = df_comp['data_medicao'].dt.year
+                df_comp_filtrado = df_comp[(df_comp['ano'] >= ano_selecionado[0]) & (df_comp['ano'] <= ano_selecionado[1])]
+                
+                st.subheader("🌡️ Comparativo de Temperatura no Tempo")
+                fig_comp_temp = px.line(df_comp_filtrado, x="data_medicao", y="temperatura", color="cidade")
+                st.plotly_chart(fig_comp_temp, use_container_width=True)
+                
+                st.subheader("📊 Amplitude e Dispersão Térmica")
+                fig_comp_box = px.box(df_comp_filtrado, x="cidade", y="temperatura", color="cidade")
+                st.plotly_chart(fig_comp_box, use_container_width=True)
 
-        # Gráfico Comparativo de Temperatura
-        st.subheader("🌡️ Comparativo de Temperatura")
-        fig_comp_temp = px.line(
-            df_comp, 
-            x="data_medicao", 
-            y="temperatura", 
-            color="cidade",
-            labels={"temperatura": "Temperatura (°C)", "data_medicao": "Data"}
-        )
-        st.plotly_chart(fig_comp_temp, use_container_width=True)
-
-        # Gráfico Comparativo de Amplitude (Boxplot)
-        st.subheader("📊 Amplitude e Dispersão Térmica")
-        fig_comp_box = px.box(
-            df_comp, 
-            x="cidade", 
-            y="temperatura", 
-            color="cidade",
-            title="Variação Térmica por Cidade (Boxplot)"
-        )
-        st.plotly_chart(fig_comp_box, use_container_width=True)
-
-        # Tabela Comparativa de Médias
-        st.subheader("📋 Resumo Médio do Período")
-        df_resumo = df_comp.groupby('cidade')[['temperatura', 'precipitacao']].mean().reset_index()
-        df_resumo.columns = ['Cidade', 'Temp. Média (°C)', 'Chuva Média (mm)']
-        st.dataframe(df_resumo.style.format(precision=1), use_container_width=True)
-    else:
-        st.info("Selecione pelo menos uma cidade para habilitar a comparação.")
+    # ==========================================
+    # ABA 3: INTELIGÊNCIA PREDITIVA (REQUISITO AV2)
+    # ==========================================
+    with tab3:
+        st.header("🔮 Predição de Séries Temporais")
+        cidade_ml = st.selectbox("Selecione a Cidade para Análise Preditiva:", df_cidades['cidade'].tolist(), key="sb_ml")
+        estacao_id_ml = df_cidades[df_cidades['cidade'] == cidade_ml]['id'].values[0]
+        
+        res_ml = requests.get(f"{API_URL}/dados/{estacao_id_ml}")
+        if res_ml.status_code == 200:
+            df_ml = pd.DataFrame(res_ml.json())
+            
+            # Dispara o treinamento e teste do modelo em tempo real baseado nos inputs do usuário
+            df_res, mae, rmse = treinar_e_prever(df_ml, ano_corte, tipo_modelo)
+            
+            if df_res is not None:
+                st.markdown(f"O modelo preditivo foi treinado com os dados históricos **anteriores ao ano de {ano_corte}** e avaliado de **{ano_corte} até 2023**.")
+                
+                # Exibição dos indicadores de performance exigidos (MAE, RMSE)
+                m1, m2 = st.columns(2)
+                with m1:
+                    st.metric(label="Erro Médio Absoluto (MAE)", value=f"{mae:.2f} °C")
+                with m2:
+                    st.metric(label="Raiz do Erro Quadrático Médio (RMSE)", value=f"{rmse:.2f} °C")
+                
+                # Gráfico comparativo Real vs Previsão
+                df_res['data_medicao'] = pd.to_datetime(df_res['data_medicao'])
+                
+                fig_pred = px.line(
+                    df_res, 
+                    x="data_medicao", 
+                    y=["temperatura", "previsao"],
+                    labels={"value": "Temperatura (°C)", "data_medicao": "Data", "variable": "Tipo"},
+                    title=f"Análise de Aderência do Modelo — {tipo_modelo} (Corte t0: {ano_corte})"
+                )
+                
+                # Customização visual: deixa a linha de previsão tracejada para melhor diferenciação
+                fig_pred.update_traces(patch={"line": {"dash": "dash"}}, selector={"name": "previsao"})
+                st.plotly_chart(fig_pred, use_container_width=True)
+                
+                st.info("💡 **Dica para a apresentação:** Como o processo gerador de dados simula uma oscilação senoidal perfeita de temperatura, o algoritmo de Regressão com variáveis senoidais consegue reproduzir e generalizar a curva perfeitamente, explicando a alta performance observada no MAE.")
