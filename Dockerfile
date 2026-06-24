@@ -9,5 +9,4 @@ COPY src/ src/
 
 EXPOSE 8501
 
-# Executa o gerador (que espera o banco ligar) e depois o dashboard
-CMD ["sh", "-c", "python src/generator.py && streamlit run src/app.py --server.port=8501 --server.address=0.0.0.0"]
+CMD ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
