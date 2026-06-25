@@ -51,3 +51,15 @@ O projeto compara climas distintos para garantir análises variadas:
 
 
 -----
+
+# 📌 APÊNDICE: Adição da API Intermediária (Evolução AV2)
+
+Em conformidade com as diretrizes da AV2, a arquitetura do sistema foi evoluída para o modelo de microsserviços. O Dashboard (Streamlit) foi completamente desacoplado da base de dados (PostgreSQL), consumindo agora exclusivamente uma API REST desenvolvida com FastAPI.
+Novas Rotas Implementadas na API:
+  * GET /health: Endpoint obrigatório de monitoramento para verificar a saúde e conectividade do ecossistema.
+  * GET /cidades: Fornece de forma dinâmica a listagem de todas as estações cadastradas para alimentar os seletores da interface.
+  * GET /resumo: Retorna estatísticas agregadas (médias térmicas e totais de precipitação) agrupadas por cidade, aceitando filtros temporais opcionais.
+  * GET /dados/{estacao_id}: Retorna o histórico de medições de uma estação específica. A filtragem por período é realizada diretamente no banco de dados através de Query Params (ano_inicio e ano_fim), otimizando o tráfego de rede.
+Alterações Estruturais:
+  * Isolamento de Acesso: O container do dashboard não possui mais credenciais nem conexão direta com o PostgreSQL. Toda a comunicação ocorre via requisições HTTP (requests) para o container da API.
+  * Documentação Automática: A API expõe a documentação interativa e testes das rotas via Swagger UI no endereço http://localhost:8000/docs.
