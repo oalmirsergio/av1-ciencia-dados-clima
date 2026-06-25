@@ -143,5 +143,3 @@ else:
                 # Customização visual: deixa a linha de previsão tracejada para melhor diferenciação
                 fig_pred.update_traces(patch={"line": {"dash": "dash"}}, selector={"name": "previsao"})
                 st.plotly_chart(fig_pred, use_container_width=True)
-                
-                st.info("💡 **Dica para a apresentação:** Como o processo gerador de dados simula uma oscilação senoidal perfeita de temperatura, o algoritmo de Regressão com variáveis senoidais consegue reproduzir e generalizar a curva perfeitamente, explicando a alta performance observada no MAE.")
